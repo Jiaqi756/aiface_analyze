@@ -1,15 +1,13 @@
 gradio==4.44.1
-
 numpy==1.26.4
 opencv-python-headless==4.9.0.80
 Pillow==10.3.0
+matplotlib==3.8.4
 
-mediapipe==0.10.9
 insightface==0.7.3
 onnxruntime==1.17.1
 
-matplotlib==3.8.4
-scikit-image==0.22.0
+mediapipe==0.10.9
 
 torch==2.2.2
 torchvision==0.17.2
