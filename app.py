@@ -1,8 +1,7 @@
-import streamlit as st
+import gradio as gr
 from PIL import Image
 import numpy as np
 import cv2
-import time
 import io
 
 from utils.style_advisor import get_style_advice
@@ -14,351 +13,193 @@ from utils.landmark import draw_landmarks
 from utils.beauty_analysis import analyze_face
 from utils.poster_generator import generate_poster
 
-# ================= 页面设置 =================
 
-st.set_page_config(
-    page_title="AI Face Analyzer",
-    page_icon="✨",
-    layout="centered"
-)
+# =========================
+# 主分析函数
+# =========================
 
-# ================= 页面美化 =================
+def analyze(image):
 
-st.markdown("""
-<style>
+    if image is None:
+        return None, "请上传图片", None, None
 
-/* 整体背景 */
-.stApp {
-    background: linear-gradient(
-        135deg,
-        #f5f7ff,
-        #efe8ff
-    );
-}
-
-/* 页面间距 */
-.block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-    max-width: 850px;
-}
-
-/* 标题 */
-h1 {
-    color: #7c4dff;
-    text-align: center;
-    font-size: 2.2rem !important;
-    font-weight: 700;
-}
-
-/* 小标题 */
-h2, h3 {
-    color: #5e35b1;
-}
-
-/* 正文 */
-.stMarkdown {
-    font-size: 16px;
-}
-
-/* 卡片 */
-.card {
-    background: white;
-    padding: 20px;
-    border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
-}
-
-/* 风格标签 */
-.style-tag {
-    display: inline-block;
-    background-color: #7c4dff;
-    color: white;
-    padding: 8px 14px;
-    border-radius: 20px;
-    margin-right: 8px;
-    margin-bottom: 8px;
-    font-size: 14px;
-}
-
-/* 手机适配 */
-@media (max-width: 768px) {
-
-    h1 {
-        font-size: 1.8rem !important;
-    }
-
-    .block-container {
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
-    }
-
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ================= 标题 =================
-
-st.title("✨ AI 面部美学分析系统")
-
-st.markdown(
-    "<div style='text-align:center;color:gray;'>"
-    "上传一张照片，开始 AI 审美分析"
-    "</div>",
-    unsafe_allow_html=True
-)
-
-st.write("")
-
-# ================= 上传图片 =================
-
-uploaded_file = st.file_uploader(
-    "请上传图片",
-    type=["jpg", "jpeg", "png"]
-)
-
-# ================= 开始分析 =================
-
-if uploaded_file is not None:
-
-    # 读取图片
-    image = Image.open(uploaded_file).convert("RGB")
-
+    # PIL -> numpy
     image_np = np.array(image)
 
+    # RGB -> BGR
     image_bgr = cv2.cvtColor(
         image_np,
         cv2.COLOR_RGB2BGR
     )
 
-    # ================= 人脸检测 =================
+    # =========================
+    # 人脸检测
+    # =========================
 
-    with st.spinner("🔍 正在检测人脸..."):
+    faces = detect_faces(image_np)
 
-        time.sleep(1)
+    if len(faces) == 0:
+        return None, "未检测到人脸", None, None
 
-        faces = detect_faces(image_np)
-
+    # =========================
     # 画框
+    # =========================
+
+    draw_img = image_bgr.copy()
+
     for face in faces:
 
-        bbox = face.bbox.astype(int)
+        # 兼容 insightface dict
+        if isinstance(face, dict):
+            bbox = np.array(face["bbox"]).astype(int)
+        else:
+            bbox = face.bbox.astype(int)
 
         x1, y1, x2, y2 = bbox
 
         cv2.rectangle(
-            image_bgr,
+            draw_img,
             (x1, y1),
             (x2, y2),
             (255, 0, 255),
             3
         )
 
-    # ================= Landmark =================
+    # =========================
+    # Landmark
+    # =========================
 
-    with st.spinner("🧠 正在分析面部关键点..."):
-
-        time.sleep(1)
-
-        landmark_image = draw_landmarks(image_bgr)
+    landmark_image = draw_landmarks(draw_img)
 
     landmark_image = cv2.cvtColor(
         landmark_image,
         cv2.COLOR_BGR2RGB
     )
 
-    # ================= 图片展示 =================
+    # =========================
+    # 美学分析
+    # =========================
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
+    result = analyze_face(image_bgr)
 
-    st.image(
-        landmark_image,
-        caption=f"检测到 {len(faces)} 张人脸",
-        use_container_width=True
+    if result is None:
+        return landmark_image, "分析失败", None, None
+
+    # =========================
+    # 风格分析
+    # =========================
+
+    style_results = classify_style(image_bgr)
+
+    # =========================
+    # AI 报告
+    # =========================
+
+    report = generate_report(
+        result,
+        style_results
     )
 
-    st.success("AI 面部关键点检测完成！")
+    # =========================
+    # 风格推荐
+    # =========================
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    top_style = style_results[0]["label"]
 
-    # ================= 美学分析 =================
+    advice = get_style_advice(top_style)
 
-    with st.spinner("📊 正在计算面部比例..."):
+    advice_text = f"""
+【AI识别风格】
+{top_style}
 
-        time.sleep(1)
+【发型推荐】
+- {"\n- ".join(advice["hair"])}
 
-        result = analyze_face(image_bgr)
+【妆容推荐】
+- {"\n- ".join(advice["makeup"])}
 
-    if result:
+【穿搭推荐】
+- {"\n- ".join(advice["fashion"])}
+"""
 
-        # ================= AI评分 =================
+    # =========================
+    # 海报生成
+    # =========================
 
-        st.subheader("📊 AI 面部美学分析")
+    poster = generate_poster(
+        landmark_image,
+        result,
+        style_results,
+        report
+    )
 
-        row1_col1, row1_col2 = st.columns(2)
+    # =========================
+    # 雷达图
+    # =========================
 
-        with row1_col1:
-            st.metric(
-                "综合评分",
-                result["score"]
-            )
+    fig = create_radar_chart(result)
 
-        with row1_col2:
-            st.metric(
-                "宽高比",
-                result["ratio"]
-            )
+    return (
+        landmark_image,
+        report + "\n\n" + advice_text,
+        fig,
+        poster
+    )
 
-        row2_col1, row2_col2 = st.columns(2)
 
-        with row2_col1:
-            st.metric(
-                "眼距比例",
-                result["eye_ratio"]
-            )
+# =========================
+# Gradio UI
+# =========================
 
-        with row2_col2:
-            st.metric(
-                "对称性",
-                result["symmetry"]
-            )
+with gr.Blocks(title="AI Face Analyzer") as demo:
 
-        # ================= 雷达图 =================
+    gr.Markdown(
+        """
+# ✨ AI 面部美学分析系统
 
-        st.subheader("🎯 AI 气质雷达图")
+上传照片，进行 AI 审美分析
+"""
+    )
 
-        fig = create_radar_chart(result)
+    with gr.Row():
 
-        st.pyplot(fig)
-
-        # ================= 风格识别 =================
-
-        st.subheader("🎨 AI 风格分析")
-
-        with st.spinner("🎨 正在识别审美风格..."):
-
-            time.sleep(2)
-
-            style_results = classify_style(image_bgr)
-
-        style_html = ""
-
-        for item in style_results[:5]:
-
-            style_html += f"""
-            <span class="style-tag">
-                {item['label']} {item['score']}%
-            </span>
-            """
-
-        st.markdown(style_html, unsafe_allow_html=True)
-
-        # ================= AI报告 =================
-
-        st.subheader("📝 AI 审美分析报告")
-
-        with st.spinner("✨ 正在生成 AI 审美报告..."):
-
-            time.sleep(1)
-
-            report = generate_report(
-                result,
-                style_results
-            )
-
-        st.markdown(f"""
-        <div class="card" style="
-            line-height:2;
-            font-size:17px;
-        ">
-        {report}
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ================= 风格推荐 =================
-
-        st.subheader("💄 AI 风格推荐")
-
-        top_style = style_results[0]["label"]
-
-        advice = get_style_advice(top_style)
-
-        # 发型
-        st.markdown("""
-        <div class="card">
-        <h3>💇 发型推荐</h3>
-        """, unsafe_allow_html=True)
-
-        for item in advice["hair"]:
-
-            st.write(f"• {item}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # 妆容
-        st.markdown("""
-        <div class="card">
-        <h3>💋 妆容推荐</h3>
-        """, unsafe_allow_html=True)
-
-        for item in advice["makeup"]:
-
-            st.write(f"• {item}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # 穿搭
-        st.markdown("""
-        <div class="card">
-        <h3>👗 穿搭推荐</h3>
-        """, unsafe_allow_html=True)
-
-        for item in advice["fashion"]:
-
-            st.write(f"• {item}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # ================= AI 海报生成 =================
-
-        st.subheader("📸 AI 分析海报")
-
-        with st.spinner("✨ 正在生成 AI 海报..."):
-
-            time.sleep(2)
-
-            poster = generate_poster(
-                landmark_image,
-                result,
-                style_results,
-                report
-            )
-
-        # 显示海报
-        '''
-        st.image(
-            poster,
-            caption="AI 审美分析海报",
-            use_container_width=True
+        input_image = gr.Image(
+            type="pil",
+            label="上传照片"
         )
-        '''
-        # 下载按钮
-        import io
 
-        buf = io.BytesIO()
+    analyze_btn = gr.Button("开始分析")
 
-        poster.save(buf, format="PNG")
+    output_image = gr.Image(
+        label="人脸关键点分析"
+    )
 
-        byte_im = buf.getvalue()
+    output_text = gr.Textbox(
+        label="AI 分析报告",
+        lines=18
+    )
 
-        st.download_button(
-            label="📥 下载 AI 海报",
-            data=byte_im,
-            file_name="ai_face_poster.png",
-            mime="image/png",
-            use_container_width=True
-        )
+    output_chart = gr.Plot(
+        label="气质雷达图"
+    )
+
+    output_poster = gr.Image(
+        label="AI 海报"
+    )
+
+    analyze_btn.click(
+        fn=analyze,
+        inputs=input_image,
+        outputs=[
+            output_image,
+            output_text,
+            output_chart,
+            output_poster
+        ]
+    )
+
+# =========================
+# 启动
+# =========================
+
+demo.launch()
