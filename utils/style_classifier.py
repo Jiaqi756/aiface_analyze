@@ -3,11 +3,12 @@ import torch
 from PIL import Image
 import cv2
 
-# 使用CPU
+# CPU模式
 device = "cpu"
 
-# 加载模型
-model, preprocess = clip.load("ViT-B/32", device=device)
+# 全局模型（懒加载）
+model = None
+preprocess = None
 
 # 风格标签
 style_labels = [
@@ -21,42 +22,83 @@ style_labels = [
     "氛围感美女"
 ]
 
+# 获取模型（只加载一次）
+def get_clip_model():
+
+    global model
+    global preprocess
+
+    if model is None or preprocess is None:
+
+        model, preprocess = clip.load(
+            "ViT-B/32",
+            device=device
+        )
+
+    return model, preprocess
+
+
 def classify_style(image_bgr):
 
-    # 转RGB
-    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    # 获取模型
+    model, preprocess = get_clip_model()
+
+    # BGR -> RGB
+    image_rgb = cv2.cvtColor(
+        image_bgr,
+        cv2.COLOR_BGR2RGB
+    )
 
     # PIL格式
     pil_image = Image.fromarray(image_rgb)
 
-    # 预处理
-    image_input = preprocess(pil_image).unsqueeze(0).to(device)
+    # 图像预处理
+    image_input = preprocess(
+        pil_image
+    ).unsqueeze(0).to(device)
 
-    # 文本
-    text = clip.tokenize(style_labels).to(device)
+    # 文本标签
+    text = clip.tokenize(
+        style_labels
+    ).to(device)
 
     # 推理
     with torch.no_grad():
 
-        logits_per_image, _ = model(image_input, text)
+        logits_per_image, _ = model(
+            image_input,
+            text
+        )
 
-        probs = logits_per_image.softmax(dim=-1).cpu().numpy()[0]
+        probs = logits_per_image.softmax(
+            dim=-1
+        ).cpu().numpy()[0]
 
-    # 排序
+    # 结果整理
     results = []
 
     for label, prob in zip(style_labels, probs):
 
         results.append({
+
             "label": label,
-            "score": round(float(prob) * 100, 1)
+
+            "score": round(
+                float(prob) * 100,
+                1
+            )
+
         })
 
-    # 按概率排序
+    # 排序
     results = sorted(
+
         results,
+
         key=lambda x: x["score"],
+
         reverse=True
+
     )
 
     return results
